@@ -30,6 +30,11 @@ jobs:
           git clone --depth 1 --recursive https://github.com/heiher/hev-socks5-tunnel.git hev-socks5-tunnel
         fi
 
+    - name: Read Version Name
+      run: |
+        VER=$(grep 'versionName = ' V2rayNG/app/build.gradle.kts | sed -E 's/.*"(.*)".*/\1/' | head -n 1)
+        echo "APP_VERSION=$VER" >> $GITHUB_ENV
+
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
@@ -74,6 +79,11 @@ jobs:
           echo "STORE_PASS=${{ secrets.APP_KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
           echo "KEY_ALIAS=${{ secrets.APP_KEYSTORE_ALIAS }}" >> $GITHUB_ENV
           echo "KEY_PASS=${{ secrets.APP_KEY_PASSWORD }}" >> $GITHUB_ENV
+        elif [ -f "${{ github.workspace }}/V2rayNG/alibaba_release.jks" ]; then
+          cp ${{ github.workspace }}/V2rayNG/alibaba_release.jks ${{ github.workspace }}/android_keystore.jks
+          echo "STORE_PASS=alibaba123" >> $GITHUB_ENV
+          echo "KEY_ALIAS=alibaba" >> $GITHUB_ENV
+          echo "KEY_PASS=alibaba123" >> $GITHUB_ENV
         else
           keytool -genkeypair -v -keystore ${{ github.workspace }}/android_keystore.jks \
             -keyalg RSA -keysize 2048 -validity 10000 -alias alibaba \
@@ -108,3 +118,17 @@ jobs:
       with:
         name: AliBaba-universal
         path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*universal*.apk
+
+    - name: Publish GitHub Release for In-App Updater
+      uses: softprops/action-gh-release@v2
+      if: ${{ success() }}
+      with:
+        tag_name: v${{ env.APP_VERSION }}
+        name: Ali baba v${{ env.APP_VERSION }}
+        body: |
+          Ali baba v${{ env.APP_VERSION }}
+          - Strict Gemini, YouTube, Spotify & DNS-Leak verification
+          - Charcoal Pro UI & Country Filtering
+        files: |
+          V2rayNG/app/build/outputs/apk/*/release/*arm64-v8a*.apk
+          V2rayNG/app/build/outputs/apk/*/release/*universal*.apk
