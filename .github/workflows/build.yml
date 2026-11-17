@@ -1,1 +1,110 @@
+name: Build Ali baba APK
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Extract AliBaba-v2rayNG-src.zip
+      run: |
+        if [ -f "AliBaba-v2rayNG-src.zip" ]; then
+          unzip -q -o AliBaba-v2rayNG-src.zip
+          cp -r v2rayNG-master/* .
+          rm -rf v2rayNG-master
+        fi
+        if [ ! -f "hev-socks5-tunnel/Makefile" ]; then
+          rm -rf hev-socks5-tunnel
+          git clone --depth 1 --recursive https://github.com/heiher/hev-socks5-tunnel.git hev-socks5-tunnel
+        fi
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '14742923'
+        packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+          --channel=0 \
+          --install "ndk;30.0.16248370"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> $GITHUB_ENV
+        sed -i '10i\
+        \
+            ndkVersion = "30.0.16248370"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
+
+    - name: Build libhevtun
+      run: |
+        bash compile-hevtun.sh
+        mkdir -p ${{ github.workspace }}/V2rayNG/app/libs
+        cp -r ${{ github.workspace }}/libs/* ${{ github.workspace }}/V2rayNG/app/libs/
+
+    - name: Download latest libv2ray.aar
+      uses: robinraju/release-downloader@v1.10
+      with:
+        repository: '2dust/AndroidLibXrayLite'
+        latest: true
+        fileName: 'libv2ray.aar'
+        out-file-path: V2rayNG/app/libs/
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Prepare Signing Keystore
+      run: |
+        if [ -n "${{ secrets.APP_KEYSTORE_BASE64 }}" ]; then
+          echo "${{ secrets.APP_KEYSTORE_BASE64 }}" | base64 --decode > ${{ github.workspace }}/android_keystore.jks
+          echo "STORE_PASS=${{ secrets.APP_KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+          echo "KEY_ALIAS=${{ secrets.APP_KEYSTORE_ALIAS }}" >> $GITHUB_ENV
+          echo "KEY_PASS=${{ secrets.APP_KEY_PASSWORD }}" >> $GITHUB_ENV
+        else
+          keytool -genkeypair -v -keystore ${{ github.workspace }}/android_keystore.jks \
+            -keyalg RSA -keysize 2048 -validity 10000 -alias alibaba \
+            -storepass alibaba123 -keypass alibaba123 \
+            -dname "CN=Ali baba, OU=VPN, O=AliBaba, L=Tehran, ST=Tehran, C=IR"
+          echo "STORE_PASS=alibaba123" >> $GITHUB_ENV
+          echo "KEY_ALIAS=alibaba" >> $GITHUB_ENV
+          echo "KEY_PASS=alibaba123" >> $GITHUB_ENV
+        fi
+
+    - name: Build APK
+      run: |
+        cd ${{ github.workspace }}/V2rayNG
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        chmod 755 gradlew
+        ./gradlew assemblePlaystoreRelease \
+          -Pandroid.injected.signing.store.file=${{ github.workspace }}/android_keystore.jks \
+          -Pandroid.injected.signing.store.password=${{ env.STORE_PASS }} \
+          -Pandroid.injected.signing.key.alias=${{ env.KEY_ALIAS }} \
+          -Pandroid.injected.signing.key.password=${{ env.KEY_PASS }}
+
+    - name: Upload arm64-v8a APK
+      uses: actions/upload-artifact@v4
+      if: ${{ success() }}
+      with:
+        name: AliBaba-arm64-v8a
+        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*arm64-v8a*.apk
+
+    - name: Upload universal APK
+      uses: actions/upload-artifact@v4
+      if: ${{ success() }}
+      with:
+        name: AliBaba-universal
+        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*universal*.apk
